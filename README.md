@@ -172,3 +172,41 @@ Player / Load Generator
 ## Team Project
 
 This implementation focuses on game-server execution, containerization, and the foundation for Kubernetes-based scaling within the Global Multiplayer Gaming Network project.
+
+## Verified Test Results
+
+The cloud gaming autoscaler was tested locally using Docker Desktop and Minikube on Windows.
+
+### Deployment Validation
+- Docker image: `game-lobby:v1`
+- Kubernetes Deployment: `game-server-deployment`
+- Kubernetes Service: `game-server-service`
+- Service type: NodePort
+- NodePort: `30090`
+- Application port: `8080`
+- HPA: `game-server-hpa`
+- CPU utilization target: `60%`
+- Minimum replicas: `1`
+- Maximum replicas: `5`
+
+### Application Endpoint Tests
+- `GET /health` returned a healthy response.
+- `GET /status` reported the server as running and showed a tick rate of 20 Hz.
+- `POST /join-match` successfully accepted a simulated player request.
+
+### Autoscaling Test
+After sending 100 player-join requests, CPU utilization increased above the configured 60% target. The Horizontal Pod Autoscaler increased the replica count from 1 to 2, then to 4, and eventually to the configured maximum of 5 replicas.
+
+The final verification showed:
+- Deployment availability: 5/5 replicas
+- HPA CPU reading: 53% against a 60% target
+- HPA replica count: 5
+- All five game-server Pods were running with zero restarts in the observed Pod listing.
+
+### Test Environment
+- Windows
+- Docker Desktop
+- Minikube
+- Kubernetes
+- kubectl
+- FastAPI

@@ -1,212 +1,57 @@
-# Global Multiplayer Gaming Network
+# Cloud Gaming Autoscaler — Member 3 Package
 
-## Project Overview
+This folder contains Member 3's traffic simulation, telemetry collection, experiment runner, and theory notes. It is designed to integrate with the team's `cloud-gaming-autoscaler` repository.
 
-This project demonstrates how cloud-native technologies can support multiplayer game server workloads. It uses FastAPI to simulate game sessions, Docker to containerize the application, and Kubernetes to deploy and scale game-server instances.
+## Contents
 
-The prototype demonstrates CPU-based horizontal autoscaling under simulated player load.
+- `load_generator/locustfile.py` — Locust clients that send simulated player requests to `/join-match` and poll `/status`.
+- `load_generator/telemetry_plotter.py` — records running/ready Pods and HPA CPU utilization; creates comparison plots.
+- `load_generator/run_experiment.sh` — runs a fixed-one-replica experiment and an HPA-enabled experiment.
+- `load_generator/requirements.txt` — Python dependencies.
+- `docs/member3_theory.md` — theory outline and speaking notes.
 
-## Technologies Used
+## Before running
 
-- **Python and FastAPI:** Game-server API and simulated game loop.
-- **Docker:** Packages the application into a container image.
-- **Kubernetes:** Manages game-server Pods through a Deployment.
-- **Minikube:** Runs a local Kubernetes cluster.
-- **Kubernetes Service:** Exposes the game server and routes traffic to available Pods.
-- **Horizontal Pod Autoscaler (HPA):** Adjusts the number of Pods according to CPU utilization.
+Confirm with the team that the Deployment is named `game-server`, the Pod label is `app=game-server`, the HPA is named `game-server`, the API accepts the JSON fields in `locustfile.py`, and the service is reachable at `http://localhost:30090`. These are configurable assumptions, not guaranteed facts about the cluster.
 
-## Project Structure
+Prerequisites: a working Kubernetes cluster, `kubectl` configured for it, the application deployed, Locust/Python dependencies installed, and metrics available if CPU utilization is to be observed.
 
-```text
-cloud-gaming-autoscaler/
-├── README.md
-├── game_backend/
-│   ├── game_server.py
-│   ├── Dockerfile
-│   └── requirements.txt
-└── cluster_orchestration/
-    └── k8s-game-cluster.yaml
-```
-
-## Game Server Features
-
-- `GET /health` — checks whether the server is healthy.
-- `GET /status` — displays server status, active-player count, tick count, and uptime.
-- `POST /join-match` — simulates a player joining a game session.
-- Simulated game loop — runs approximately 20 ticks per second.
-- Simulated CPU workload — represents processing associated with player activity.
-
-The prototype keeps player counts in each server process's local memory. It does not implement a shared production game-state system.
-
-## Kubernetes Configuration
-
-The Kubernetes configuration defines three resources:
-
-1. **Deployment:** Manages the game-server Pods.
-2. **NodePort Service:** Exposes the server on port `30090` at the Kubernetes node level.
-3. **Horizontal Pod Autoscaler:** Targets 60% average CPU utilization and scales between 1 and 5 replicas.
-
-The container requests `100m` CPU and has a limit of `250m` CPU.
-
-## Setup and Execution
-
-### 1. Start Docker Desktop
-
-Open Docker Desktop and wait until its engine is running.
-
-### 2. Start Minikube
-
-From the project root in PowerShell:
-
-```powershell
-minikube start --driver=docker
-```
-
-### 3. Verify the cluster
-
-```powershell
+```bash
+cd load_generator
+pip install -r requirements.txt
 kubectl get nodes
+kubectl get deploy,svc,hpa
+curl http://localhost:30090/health
+curl http://localhost:30090/status
 ```
 
-The Minikube node should show `Ready`.
+## Run experiments
 
-### 4. Load the Docker image if necessary
+Start with a small test and increase the workload only after confirming the cluster remains responsive:
 
-If the image is unavailable inside Minikube, rebuild it from the `game_backend` directory:
-
-```powershell
-docker build -t game-lobby:v1 .
-minikube image load game-lobby:v1
+```bash
+./run_experiment.sh unmanaged 20 5 60
+./run_experiment.sh managed 20 5 60
 ```
 
-Return to the project root before running the following commands.
+Arguments are mode, simulated users, spawn rate (users/second), and duration (seconds). The script defaults to `localhost:30090`. Override assumptions with environment variables, for example:
 
-### 5. Apply the Kubernetes configuration
-
-```powershell
-kubectl apply -f .\cluster_orchestration\k8s-game-cluster.yaml
+```bash
+HOST=http://localhost:30090 DEPLOY=game-server APP_LABEL=game-server HPA_NAME=game-server \
+  ./run_experiment.sh managed 100 10 120
 ```
 
-### 6. Verify deployment and autoscaling
+The script removes only the named HPA in unmanaged mode; verify `HPA_NAME` before running. Managed mode applies the manifest at `../cluster_orchestration/k8s-game-cluster.yaml`, so change `MANIFEST` if the team's filename differs. The script changes cluster resources and should only be run in your team's test namespace/cluster with team approval.
 
-```powershell
-kubectl get pods -l app=game-server
-kubectl get services
-kubectl get hpa
-kubectl top pods
-```
+On Windows, run the `.sh` script from Git Bash or WSL. Alternatively, run Locust and the telemetry collector manually from separate terminals.
 
-### 7. Expose the service locally
+## Outputs and interpretation
 
-Run:
+The `results/` directory is created when experiments run. It should contain Locust CSV files, cluster samples, and `comparison.png` after both runs have completed. The graph compares throughput, failure rate, P95 latency, and ready Pod counts. Results are not included in this package because the tests have not been executed against your team's live cluster. Do not invent or claim benchmark outcomes before collecting them.
 
-```powershell
-minikube service game-server-service --url
-```
+## Important limitations
 
-Use the URL printed by the command. Keep that terminal open while using the URL.
-
-Open the URL followed by `/health` in a browser to check the server.
-
-### 8. Simulate player requests
-
-Replace the example URL below with the URL printed in the previous step:
-
-```powershell
-1..20 | ForEach-Object {
-    Invoke-RestMethod `
-      -Uri "http://127.0.0.1:55461/join-match" `
-      -Method Post `
-      -ContentType "application/json" `
-      -Body (@{player_id="player$_"} | ConvertTo-Json)
-}
-```
-
-### 9. Observe autoscaling
-
-After generating load, run:
-
-```powershell
-kubectl top pods
-kubectl get hpa
-kubectl get pods -l app=game-server
-```
-
-When CPU utilization remains above the target, the HPA may increase the replica count, up to the configured maximum of five Pods. Scaling takes time and depends on the observed metrics.
-
-## Architecture
-
-Player requests reach the Kubernetes Service, which routes traffic to available game-server Pods. The HPA monitors average CPU utilization and adjusts the Deployment's replica count.
-
-```text
-Player / Load Generator
-          |
-          v
- Kubernetes Service
-          |
-          v
-   Game-server Pods
-          ^
-          |
-    Kubernetes HPA
-          |
-   Monitors CPU usage
-          |
-   Scales the Deployment
-```
-
-## Current Limitations
-
-- Game state is stored in local process memory rather than shared storage.
-- The game loop simulates processing; it is not a complete multiplayer game engine.
-- CPU utilization is used for autoscaling instead of custom game-session metrics.
-- The prototype does not implement production-grade session migration, persistent connections, or distributed game-state synchronization.
-
-## Future Improvements
-
-- Introduce shared session state and session-aware orchestration.
-- Add load testing with Locust.
-- Explore custom metrics for active sessions and player counts.
-- Investigate production multiplayer networking and graceful session shutdown.
-
-## Team Project
-
-This implementation focuses on game-server execution, containerization, and the foundation for Kubernetes-based scaling within the Global Multiplayer Gaming Network project.
-
-## Verified Test Results
-
-The cloud gaming autoscaler was tested locally using Docker Desktop and Minikube on Windows.
-
-### Deployment Validation
-- Docker image: `game-lobby:v1`
-- Kubernetes Deployment: `game-server-deployment`
-- Kubernetes Service: `game-server-service`
-- Service type: NodePort
-- NodePort: `30090`
-- Application port: `8080`
-- HPA: `game-server-hpa`
-- CPU utilization target: `60%`
-- Minimum replicas: `1`
-- Maximum replicas: `5`
-
-### Application Endpoint Tests
-- `GET /health` returned a healthy response.
-- `GET /status` reported the server as running and showed a tick rate of 20 Hz.
-- `POST /join-match` successfully accepted a simulated player request.
-
-### Autoscaling Test
-After sending 100 player-join requests, CPU utilization increased above the configured 60% target. The Horizontal Pod Autoscaler increased the replica count from 1 to 2, then to 4, and eventually to the configured maximum of 5 replicas.
-
-The final verification showed:
-- Deployment availability: 5/5 replicas
-- HPA CPU reading: 53% against a 60% target
-- HPA replica count: 5
-- All five game-server Pods were running with zero restarts in the observed Pod listing.
-
-### Test Environment
-- Windows
-- Docker Desktop
-- Minikube
-- Kubernetes
-- kubectl
-- FastAPI
+- The workload simulates HTTP requests; it is not a real UDP/WebSocket multiplayer protocol implementation.
+- The telemetry script reads the first HPA returned by Kubernetes, which may not be the game server's HPA if several HPAs exist. For a valid report, use a dedicated test namespace or update the collector to select the HPA by name/target deployment.
+- A PDB alone does not guarantee that active matches survive HPA scale-down. Session-aware draining requires application-level logic and testing; it is not implemented by these files.
+- Cloud-cost figures should be labeled illustrative unless based on a selected provider's actual pricing and measured resource usage.

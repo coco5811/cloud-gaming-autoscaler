@@ -1,0 +1,106 @@
+# ==========================================
+# PART 1: SERVICE
+# ==========================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-server-service
+spec:
+  type: NodePort
+  selector:
+    app: game-server
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      nodePort: 30090
+
+---
+# ==========================================
+# PART 2: DEPLOYMENT WITH SESSION DRAINING
+# ==========================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-server-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: game-server
+  template:
+    metadata:
+      labels:
+        app: game-server
+    spec:
+      # Includes the preStop hook and app shutdown time.
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: game-lobby
+          image: game-lobby:v2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DRAIN_TIMEOUT_SECONDS
+              value: "25"
+          resources:
+            requests:
+              cpu: "100m"
+            limits:
+              cpu: "250m"
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    set -e
+                    python -c "import urllib.request; req=urllib.request.Request('http://127.0.0.1:8080/drain', method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"
+                    sleep 3
+          # Readiness controls whether Service traffic is sent to the Pod.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 1
+          # Liveness only checks whether the app is alive.
+          # Do not use /ready here, or draining could cause restarts.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+---
+# ==========================================
+# PART 3: HORIZONTAL POD AUTOSCALER
+# ==========================================
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: game-server-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: game-server-deployment
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

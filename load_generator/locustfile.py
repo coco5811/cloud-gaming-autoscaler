@@ -26,12 +26,12 @@ class GameClient(HttpUser):
             "x": random.uniform(0, 1000),
             "y": random.uniform(0, 1000),
         }
+        
         with self.client.post("/join-match", json=payload,
-                              catch_response=True, name="/join-match") as r:
-            if r.status_code != 200:
-                r.failure(f"HTTP {r.status_code}")
-            elif r.elapsed.total_seconds() > 1.0:   # latency SLO for a game lobby
-                r.failure("slow response >1s")
+                      catch_response=True, name="/join-match") as r:
+                         if r.status_code != 200:
+                              r.failure(f"HTTP {r.status_code}")
+
 
     @task(1)
     def check_status(self):

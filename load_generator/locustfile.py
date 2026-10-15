@@ -29,8 +29,8 @@ class GameClient(HttpUser):
         
         with self.client.post("/join-match", json=payload,
                       catch_response=True, name="/join-match") as r:
-                         if r.status_code != 200:
-                              r.failure(f"HTTP {r.status_code}")
+                        if r.status_code != 200:
+                          r.failure(f"HTTP {r.status_code}")
 
 
     @task(1)
